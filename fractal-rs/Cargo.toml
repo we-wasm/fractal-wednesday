@@ -5,3 +5,5 @@ authors = ["Vincent Khougaz <vincent@khougaz.com>"]
 
 [dependencies]
 num = "0.2.0"
+lodepng = "2.5.0"
+rgb = "0.8.14"

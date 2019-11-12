@@ -1,7 +1,9 @@
 extern crate num;
+extern crate rgb;
 
 use num::complex::Complex64;
 use num::pow::pow;
+use rgb::*;
 
 struct Point<T> {
     x: T,
@@ -17,10 +19,15 @@ enum FractalAlgorithm {
     NaiveMandlebrot = 1,
 }
 
+// TODO: create ViewportConfig or something because every tile has the same config
+// Viewport (defines how tiles are rendered)
+// -> TileConfig - Defines a single tile, enough data to generate
+// -> TileData - Data injected in
+// -> TilePosition - Where a tile appears on screen
 struct TileConfig {
     index: Point<i64>,
     zoom: usize,
-    size: Point<u32>,
+    size: Point<usize>,
     max_iter: u64,
     algorithm: FractalAlgorithm,
 }
@@ -104,6 +111,44 @@ fn serial(config: TileConfig) -> Tile {
     Tile { config, data }
 }
 
-fn main() {
-    println!("Hello, world!");
+fn palette(iter: u64, max_iter: u64) -> RGB8 {
+    if iter == max_iter {
+        return RGB8 { r: 255, g: 0, b: 0 };
+    }
+    if iter % 2 == 0 {
+        RGB8 {
+            r: 255,
+            g: 255,
+            b: 255,
+        }
+    } else {
+        RGB { r: 0, g: 0, b: 0 }
+    }
 }
+
+fn main() {
+    let conf: TileConfig = TileConfig {
+        index: Point { x: 0, y: 0 },
+        zoom: 0,
+        size: Point { x: 256, y: 256 },
+        algorithm: FractalAlgorithm::NaiveMandlebrot,
+        max_iter: 100000,
+    };
+
+    let max_iter = conf.max_iter;
+    let w = conf.size.x;
+    let h = conf.size.y;
+
+    let tile: Tile = serial(conf);
+
+    let image: Vec<RGB8> = tile
+        .data
+        .iter()
+        .map(|iter: &u64| palette(*iter, max_iter))
+        .collect();
+
+    if let Err(e) = lodepng::encode_file("mandel.png", &image, w, h, lodepng::ColorType::RGB, 8) {
+        panic!("failed to write png: {:?}", e);
+    }
+}
+// cargo run  120.34s user 0.54s system 98% cpu 2:02.46 total
