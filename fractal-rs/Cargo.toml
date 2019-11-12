@@ -1,0 +1,7 @@
+[package]
+name = "fractal-rs"
+version = "0.1.0"
+authors = ["Vincent Khougaz <vincent@khougaz.com>"]
+
+[dependencies]
+num = "0.2.0"
