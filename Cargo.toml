@@ -1,0 +1,7 @@
+# https://github.com/rust-lang/rls/issues/1202
+# Workaround for not having Cargo.toml of sub-projects in git root
+# Affects anything that works on rust code (eg lint, VSCode, ...)
+[workspace]
+members = [
+    "fractal-rs",
+]
