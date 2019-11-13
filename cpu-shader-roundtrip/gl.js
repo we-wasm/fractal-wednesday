@@ -1,7 +1,6 @@
 window.onload = () => {
   const canvas = document.querySelector("#gl");
-  console.log(canvas);
-  const gl = canvas.getContext("webgl2", { antialias: false });
+  const gl = canvas.getContext("webgl2");
 
   if (gl === null) {
     return console.log(
@@ -9,6 +8,20 @@ window.onload = () => {
     );
   }
 
-  gl.clearColor(0.0, 0.0, 0.0, 1.0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+  const brightness = document.querySelector("#brightness");
+  brightness.addEventListener("input", e =>
+    changeBrightness(gl, e.target.value)
+  );
+
+  changeBrightness(gl, brightness.value);
 };
+
+function changeBrightness(gl, brightness) {
+  if (!gl) {
+    return;
+  }
+  const scaled = isNaN(+brightness) ? 0 : +brightness / 100;
+
+  gl.clearColor(scaled, scaled, scaled, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+}
