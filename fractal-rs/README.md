@@ -39,3 +39,10 @@ Render phases:
 	2. Map position viewport space to tile + sample space
 	3. Supersample? (avg of region)
 	4. Colorize
+
+* Viewport takes sample - specific
+* Sample is turned to iterations - generic
+  * Sample is turned to tile space + offset - specific
+  * Tile is generated - generic
+* Iterations is turned to color - specific
+* 
