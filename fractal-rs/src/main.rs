@@ -4,74 +4,120 @@ extern crate rgb;
 use num::complex::Complex64;
 use num::pow::pow;
 use rgb::*;
+use std::collections::HashMap;
+use std::ops::Deref;
 
+#[derive(Debug, Clone)]
 struct Point<T> {
     x: T,
     y: T,
 }
 
-struct Viewport {
-    center: Point<f64>,
-    size: Point<u32>,
+#[derive(Debug, Clone)]
+struct TileSpace {
+    // unique data per tile
+    index: Point<i64>, // big int
+    zoom: usize,       // big int
 }
 
-enum FractalAlgorithm {
-    NaiveMandlebrot = 1,
+struct ComplexSpace(Complex64); // big decimal
+impl ComplexSpace {
+    fn from(t: &TileSpace) -> Self {
+        return ComplexSpace(Complex64 {
+            re: t.index.x as f64 / pow(2.0, t.zoom),
+            im: t.index.y as f64 / pow(2.0, t.zoom),
+        });
+    }
+}
+impl Deref for ComplexSpace {
+    type Target = Complex64;
+
+    fn deref(&self) -> &Complex64 {
+        &self.0
+    }
 }
 
-// TODO: create ViewportConfig or something because every tile has the same config
-// Viewport (defines how tiles are rendered)
-// -> TileConfig - Defines a single tile, enough data to generate
-// -> TileData - Data injected in
-// -> TilePosition - Where a tile appears on screen
-struct TileConfig {
-    index: Point<i64>,
-    zoom: usize,
+// Generator
+trait Generator {
+    fn generate(&self, tile: &TileSpace) -> Tile;
+    fn hash(&self, tile: &TileSpace) -> TileHash;
+}
+
+struct GeneratorConfig {
     size: Point<usize>,
-    max_iter: u64,
-    algorithm: FractalAlgorithm,
+    max_iter: u64, // big integer?
 }
 
 struct Tile {
-    config: TileConfig,
     data: Vec<u64>,
 }
 
-struct TileGeneration {
-    start: Point<f64>,
-    step: Point<f64>,
+// Tile Manager
+trait TileManager {
+    fn sample(&self, location: ComplexSpace, zoom: f64) -> u64;
+}
+type TileHash = String;
+
+struct TileStorage {
+    generator: Box<dyn Generator>,
+    storage: HashMap<TileHash, Tile>,
 }
 
-fn transform_index(p: &Point<i64>, z: usize) -> Point<f64> {
-    let p: Point<f64> = Point {
-        x: p.x as f64,
-        y: p.y as f64,
-    };
-
-    return Point {
-        x: p.x / pow(2.0, z),
-        y: p.y / pow(2.0, z),
-    };
+// Renderer
+trait PixelRenderer {
+    fn render(&self, viewport: &ViewportConfig) -> Vec<RGB8>;
 }
 
-fn calc_gen_info(config: &TileConfig) -> TileGeneration {
-    let z: usize = config.zoom;
-    let start: Point<f64> = transform_index(&config.index, z);
-    let end: Point<f64> = transform_index(
-        &Point {
-            x: config.index.x + 1,
-            y: config.index.y + 1,
-        },
-        z,
-    );
+struct RenderConfig {
+    manager: Box<dyn TileManager>,
+    palette: Vec<RGB8>,
+    bottom: RGB8,
+    size: Point<usize>,
+}
 
-    return TileGeneration {
-        step: Point {
-            x: (end.x - start.x) / config.size.x as f64,
-            y: (end.y - start.y) / config.size.y as f64,
-        },
-        start: start,
-    };
+struct ViewportConfig {
+    center: ComplexSpace,
+    zoom: f64, // big decimal
+}
+
+impl Generator for GeneratorConfig {
+    fn generate(&self, tile: &TileSpace) -> Tile {
+        let z: usize = tile.zoom;
+        let start = ComplexSpace::from(tile);
+        let end = ComplexSpace::from(&TileSpace {
+            index: Point {
+                x: tile.index.x + 1,
+                y: tile.index.y + 1,
+            },
+            zoom: z,
+        });
+
+        let step_x: f64 = (end.re - start.re) / self.size.x as f64;
+        let step_y: f64 = (end.im - start.im) / self.size.y as f64;
+
+        let mut data: Vec<u64> = vec![0; (self.size.x * self.size.y) as usize];
+
+        for y in 0..self.size.y {
+            for x in 0..self.size.x {
+                data[((y * self.size.y) + x) as usize] = mandel_iter(
+                    self.max_iter,
+                    Complex64 {
+                        re: start.re + ((x as f64) * step_x),
+                        im: start.im + ((y as f64) * step_y),
+                    },
+                );
+            }
+        }
+
+        Tile { data }
+    }
+
+    fn hash(&self, tile: &TileSpace) -> TileHash {
+        return format!(
+            "{}x{}-{}-x{}y{}z{}",
+            self.size.x, self.size.y, self.max_iter, tile.index.x, tile.index.y, tile.zoom
+        );
+    }
 }
 
 // via https://github.com/willi-kappler/mandel-rust/blob/master/mandel_method/src/lib.rs
@@ -90,64 +136,55 @@ pub fn mandel_iter(max_iter: u64, c: Complex64) -> u64 {
     iter
 }
 
-// The serial version of the mandelbrot set calculation.
-fn serial(config: TileConfig) -> Tile {
-    let mut data: Vec<u64> = vec![0; (config.size.x * config.size.y) as usize];
-
-    let gen = calc_gen_info(&config);
-
-    for y in 0..config.size.y {
-        for x in 0..config.size.x {
-            data[((y * config.size.y) + x) as usize] = mandel_iter(
-                config.max_iter,
-                Complex64 {
-                    re: gen.start.x + ((x as f64) * gen.step.x),
-                    im: gen.start.y + ((y as f64) * gen.step.y),
-                },
-            );
-        }
+impl TileManager for TileStorage {
+    fn sample(&self, location: ComplexSpace, zoom: f64) -> u64 {
+        //
     }
-
-    Tile { config, data }
 }
 
-fn palette(iter: u64, max_iter: u64) -> RGB8 {
-    if iter == max_iter {
-        return RGB8 { r: 255, g: 0, b: 0 };
-    }
-    if iter % 2 == 0 {
-        RGB8 {
-            r: 255,
-            g: 255,
-            b: 255,
-        }
-    } else {
-        RGB { r: 0, g: 0, b: 0 }
-    }
+impl PixelRenderer for RenderConfig {
+    fn render(&self, viewport: &ViewportConfig) -> Vec<RGB8> {}
 }
 
 fn main() {
-    let conf: TileConfig = TileConfig {
-        index: Point { x: 0, y: 0 },
-        zoom: 0,
+    let generator = GeneratorConfig {
+        max_iter: 5000,
         size: Point { x: 256, y: 256 },
-        algorithm: FractalAlgorithm::NaiveMandlebrot,
-        max_iter: 100000,
     };
 
-    let max_iter = conf.max_iter;
-    let w = conf.size.x;
-    let h = conf.size.y;
+    let manager = TileStorage {
+        generator: Box::new(generator),
+        storage: HashMap::new(),
+    };
 
-    let tile: Tile = serial(conf);
+    let renderer = RenderConfig {
+        manager: Box::new(manager),
+        palette: vec![
+            RGB8 {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+            RGB { r: 0, g: 0, b: 0 },
+        ],
+        bottom: RGB { r: 255, g: 0, b: 0 },
+        size: Point { x: 512, y: 512 },
+    };
+    let viewport = ViewportConfig {
+        center: ComplexSpace(Complex64 { re: 0.0, im: 0.0 }),
+        zoom: 0.0,
+    };
 
-    let image: Vec<RGB8> = tile
-        .data
-        .iter()
-        .map(|iter: &u64| palette(*iter, max_iter))
-        .collect();
+    let pixels = renderer.render(&viewport);
 
-    if let Err(e) = lodepng::encode_file("mandel.png", &image, w, h, lodepng::ColorType::RGB, 8) {
+    if let Err(e) = lodepng::encode_file(
+        "mandel.png",
+        &pixels,
+        renderer.size.x,
+        renderer.size.y,
+        lodepng::ColorType::RGB,
+        8,
+    ) {
         panic!("failed to write png: {:?}", e);
     }
 }
