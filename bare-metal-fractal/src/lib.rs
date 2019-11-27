@@ -7,10 +7,14 @@ extern crate wee_alloc;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+use alloc::alloc::alloc;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
+use alloc::slice;
+use core::alloc::Layout;
 use core::f32;
-use core::ops::Add;
+use core::ffi::c_void;
+use core::mem;
+use core::ops::{Add, Deref, DerefMut};
 
 // Compiler calming
 #[panic_handler]
@@ -36,37 +40,75 @@ extern "C" {
 pub struct TileBuffer {
     w: u32,
     h: u32,
-    buf: Vec<u32>,
+    buf: BoxedSlice<u32>,
 }
+
+// Golfing away vec...
+struct BoxedSlice<T>(Box<[T]>);
+
+impl<T> BoxedSlice<T> {
+    // copied from vec source at
+    // https://github.com/rust-lang/rust/blob/master/src/liballoc/raw_vec.rs
+    pub fn with_size(size: usize) -> Self {
+        let elem_size = mem::size_of::<T>();
+        let alloc_size = size * elem_size;
+        let align = mem::align_of::<T>();
+        unsafe {
+            let layout = Layout::from_size_align_unchecked(alloc_size, align);
+            let ptr = alloc(layout) as *mut T;
+            let s = slice::from_raw_parts_mut(ptr, alloc_size);
+            BoxedSlice(Box::from_raw(s))
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len() / mem::size_of::<T>()
+    }
+}
+impl<T> Deref for BoxedSlice<T> {
+    type Target = Box<[T]>;
+
+    fn deref(&self) -> &Box<[T]> {
+        &self.0
+    }
+}
+impl<T> DerefMut for BoxedSlice<T> {
+    fn deref_mut(&mut self) -> &mut Box<[T]> {
+        &mut self.0
+    }
+}
+// implementing a bounds unchecked slice access would shave some kb
 
 // http://jakegoulding.com/rust-ffi-omnibus/objects/
 #[no_mangle]
-pub extern "C" fn alloc_tile(width: u32, height: u32) -> *mut TileBuffer {
+pub extern "C" fn alloc_tile(width: u32, height: u32) -> *mut c_void {
     let tile = TileBuffer {
         w: width,
         h: height,
-        buf: Vec::with_capacity((width * height) as usize),
+        buf: BoxedSlice::with_size((width * height) as usize),
     };
-    Box::into_raw(Box::new(tile))
+    Box::into_raw(Box::new(tile)) as *mut c_void
+}
+
+unsafe fn ref_tile(tile_ptr: *mut c_void) -> &'static mut TileBuffer {
+    assert!(!tile_ptr.is_null());
+    &mut *(tile_ptr as *mut TileBuffer)
 }
 
 #[no_mangle]
-pub extern "C" fn get_buffer(tile_ptr: *mut TileBuffer) -> *mut u32 {
-    let tile = unsafe {
-        assert!(!tile_ptr.is_null());
-        &mut *tile_ptr
-    };
+pub extern "C" fn get_buffer(tile_ptr: *mut c_void) -> *mut u32 {
+    let tile = unsafe { ref_tile(tile_ptr) };
 
     tile.buf.as_mut_ptr()
 }
 
 #[no_mangle]
-pub extern "C" fn free_tile(tile_ptr: *mut TileBuffer) {
+pub extern "C" fn free_tile(tile_ptr: *mut c_void) {
     if tile_ptr.is_null() {
         return;
     }
     unsafe {
-        Box::from_raw(tile_ptr);
+        Box::from_raw(tile_ptr as *mut TileBuffer);
     }
 }
 
@@ -155,26 +197,35 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
 static BOTTOM: u32 = rgb(0, 0, 0);
 
 // golfing to do here...
-fn build_palette(size: usize) -> Vec<u32> {
-    let mut palette = Vec::with_capacity(size);
-
+fn build_palette(size: usize) -> BoxedSlice<u32> {
+    let mut palette = BoxedSlice::with_size(size);
+    // can shave ~200b here
     for i in 0..size {
         let m = i as f32 / size as f32;
-        palette.push(if m < 0.5 {
-            let h = 0.66666666666; // blue
-                                   // black to white
-            let v = scale_value(m, 0.0, 0.5, 0.0, 1.0);
-            hsv_to_rgb(h, 0.5, v)
+        palette[i] = if m < 0.5 {
+            let h = 200.0 / 365.0; // blue
+            if m < 0.25 {
+                let v = scale_value(m, 0.0, 0.25, 0.0, 1.0); // black to blue (v 0 -> 1)
+                hsv_to_rgb(h, 1.0, v)
+            } else {
+                let s = scale_value(m, 0.25, 0.5, 1.0, 0.0); // blue to white (s 1 -> 0)
+                hsv_to_rgb(h, s, 1.0)
+            }
         } else {
-            let h = 0.08333333333; // orange
-            let v = scale_value(m, 0.5, 1.0, 1.0, 0.0);
-            hsv_to_rgb(h, 0.5, v)
-        });
+            let h = 30.0 / 365.0; // orange
+            if m < 0.75 {
+                let s = scale_value(m, 0.5, 0.75, 0.0, 1.0); // white to orange (s 0 -> 1)
+                hsv_to_rgb(h, s, 1.0)
+            } else {
+                let v = scale_value(m, 0.75, 1.0, 1.0, 0.0); // orange to black (v 1 -> 0)
+                hsv_to_rgb(h, 1.0, v)
+            }
+        };
     }
     palette
 }
 
-fn mandel_color(i: u64, palette: &Vec<u32>) -> u32 {
+fn mandel_color(i: u64, palette: &BoxedSlice<u32>) -> u32 {
     if i == 0 {
         BOTTOM
     } else {
@@ -185,16 +236,13 @@ fn mandel_color(i: u64, palette: &Vec<u32>) -> u32 {
 // Javascript jams
 #[no_mangle]
 pub extern "C" fn render(
-    tile_ptr: *mut TileBuffer,
+    tile_ptr: *mut c_void,
     max_iter: u32,
     center_re: f32,
     center_im: f32,
     viewport_width: f32,
 ) {
-    let tile = unsafe {
-        assert!(!tile_ptr.is_null());
-        &mut *tile_ptr
-    };
+    let tile = unsafe { ref_tile(tile_ptr) };
     render_frame_safe(tile, max_iter, center_re, center_im, viewport_width)
 }
 
@@ -209,17 +257,12 @@ fn render_frame_safe(
 ) {
     let width = tile.w;
     let height = tile.h;
-    let buf = tile.buf.as_mut_ptr();
 
     let step = (viewport_width / width as f32) as f64;
     let start_re = (center_re - viewport_width / 2.0) as f64;
-    let start_im = (center_im - viewport_width / 2.0) as f64;
+    let start_im = (center_im - (viewport_width * (height as f32 / width as f32)) / 2.0) as f64;
 
     let palette = build_palette(20);
-    unsafe {
-        js_logf(1.6);
-        js_logu(palette[8]);
-    }
 
     for y in 0..height {
         for x in 0..width {
@@ -233,9 +276,7 @@ fn render_frame_safe(
                 ),
                 &palette,
             );
-            // saves 1.5k of code
-            unsafe { *buf.offset((y * width + x) as isize) = c }
-            // tile.buf[(y * width + x) as usize] = c;
+            tile.buf[(y * width + x) as usize] = c;
         }
     }
 }

@@ -3,6 +3,16 @@
 
 <head>
   <meta charset="UTF-8">
+  <style>
+    body {
+      position: absolute;
+      margin: 0;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      right: 0;
+    }
+  </style>
   <script type="module">
     async function init() {
       const { instance } = await WebAssembly.instantiateStreaming(
@@ -15,19 +25,12 @@
         }
       );
 
-      const width = 600;
-      const height = 600;
-
-      const canvas = document.getElementById("demo-canvas");
-      canvas.width = width;
-      canvas.height = height;
-
       const { alloc_tile, free_tile, get_buffer, render } = instance.exports;
 
       // https://stackoverflow.com/questions/51659292/javascript-arraybuffer-detaches-when-constructing-a-new-rust-vec-via-wasm
       // this pointer is invalidated when the wasm memory buffer is grown?
 
-      function getImageData(t) {
+      function getImageData(t, width, height) {
         return new ImageData(
           new Uint8ClampedArray(
             instance.exports.memory.buffer,
@@ -38,16 +41,35 @@
         );
       }
 
-      const ctx = canvas.getContext("2d");
-
-      function renderToCanvas() {
+      function renderToCanvas(canvas) {
+        const { width, height } = canvas;
+        const start = performance.now();
         const tile = alloc_tile(width, height);
-        render(tile, 1000, -0.5, 0.0, 3.0);
-        ctx.putImageData(getImageData(tile), 0, 0);
+        render(tile, 100, -0.5, 0.0, 3.0);
+        const ctx = canvas.getContext("2d");
+        ctx.putImageData(getImageData(tile, width, height), 0, 0);
         free_tile(tile);
+        const elapsed = performance.now() - start;
+        console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${instance.exports.memory.buffer.byteLength / 1000000}M`);
       }
 
-      renderToCanvas();
+      const canvas = document.getElementById("demo-canvas");
+      const body = document.getElementsByTagName('body')[0];
+      function getSize() {
+        return {
+          width: body.offsetWidth - 5,
+          height: body.offsetHeight - 5
+        }
+      }
+      let lastW, lastH;
+      setInterval(() => {
+        const { width, height } = getSize();
+        if (lastW !== width || lastH !== height) {
+          canvas.width = lastW = width;
+          canvas.height = lastH = height;
+          renderToCanvas(canvas);
+        }
+      }, 100);
     }
 
     init();
