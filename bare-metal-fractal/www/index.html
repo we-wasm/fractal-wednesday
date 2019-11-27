@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <script type="module">
+    async function init() {
+      const { instance } = await WebAssembly.instantiateStreaming(
+        fetch("./bare_metal_fractal.wasm"),
+        {
+          "env": {
+            "js_log": console.log,
+          },
+        }
+      );
+
+      const width = 600;
+      const height = 600;
+
+      const canvas = document.getElementById("demo-canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const { make_viewport, get_buffer, render } = instance.exports;
+
+      // https://stackoverflow.com/questions/51659292/javascript-arraybuffer-detaches-when-constructing-a-new-rust-vec-via-wasm
+      // this pointer is invalidated when the wasm memory buffer is grown?
+      const viewport = make_viewport(width, height);
+
+      function getImageData(vp) {
+        return new ImageData(
+          new Uint8ClampedArray(
+            instance.exports.memory.buffer,
+            get_buffer(vp),
+            4 * width * height
+          ),
+          width
+        );
+      }
+
+      const ctx = canvas.getContext("2d");
+
+      function renderToCanvas() {
+        render(viewport);
+        ctx.putImageData(getImageData(viewport), 0, 0);
+      }
+
+      renderToCanvas();
+    }
+
+    init();
+  </script>
+</head>
+
+<body>
+  <canvas id="demo-canvas"></canvas>
+</body>
+
+</html>
