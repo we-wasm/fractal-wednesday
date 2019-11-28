@@ -18,63 +18,69 @@ use core::mem;
 use core::ops::{Add, Deref, DerefMut};
 
 // Debugging
-use alloc::format;
-use alloc::string::{String, ToString};
+#[cfg(debug_assertions)]
+#[macro_use]
+mod debug {
+    use alloc::slice;
+    use alloc::string::{String, ToString};
 
-const DEBUG_BUFFER_SIZE: usize = 240;
+    const DEBUG_BUFFER_SIZE: usize = 240;
 
-static mut DEBUG_BUFFER: [u8; DEBUG_BUFFER_SIZE] = [0; DEBUG_BUFFER_SIZE];
-static mut DEBUG_MSG_SIZE: usize = 0;
+    static mut DEBUG_BUFFER: [u8; DEBUG_BUFFER_SIZE] = [0; DEBUG_BUFFER_SIZE];
+    static mut DEBUG_MSG_SIZE: usize = 0;
 
-#[no_mangle]
-pub extern "C" fn get_debug_buffer() -> *const u8 {
-    unsafe { DEBUG_BUFFER.as_ptr() }
-}
-#[no_mangle]
-pub extern "C" fn get_debug_msg_size() -> usize {
-    unsafe { DEBUG_MSG_SIZE }
-}
+    #[no_mangle]
+    pub extern "C" fn get_debug_buffer() -> *const u8 {
+        unsafe { DEBUG_BUFFER.as_ptr() }
+    }
+    #[no_mangle]
+    pub extern "C" fn get_debug_msg_size() -> usize {
+        unsafe { DEBUG_MSG_SIZE }
+    }
 
-/*
-https://stackoverflow.com/questions/47529643/how-to-return-a-string-or-similar-from-rust-in-webassembly
-constant string buffer
-log copies input string to buffer
-call js
-js looks up buffer address
-js looks up msg len
-js loads to local buffer
-console logs
-*/
+    extern "C" {
+        fn js_log_msg();
+    }
 
-extern "C" {
-    fn js_log_msg();
-}
+    pub fn log_string(src_str: String) {
+        let src_full = &src_str.to_string();
+        unsafe {
+            DEBUG_MSG_SIZE = if src_full.len() > DEBUG_BUFFER_SIZE {
+                DEBUG_BUFFER_SIZE
+            } else {
+                src_full.len()
+            };
+            let src = slice::from_raw_parts(src_full.as_ptr(), DEBUG_MSG_SIZE);
+            let dst = slice::from_raw_parts_mut(DEBUG_BUFFER.as_mut_ptr(), DEBUG_MSG_SIZE);
+            dst.copy_from_slice(src);
+            js_log_msg();
+        }
+    }
 
-fn log(src_full: &str) {
-    unsafe {
-        DEBUG_MSG_SIZE = if src_full.len() > DEBUG_BUFFER_SIZE {
-            DEBUG_BUFFER_SIZE
-        } else {
-            src_full.len()
-        };
-        let src = slice::from_raw_parts(src_full.as_ptr(), DEBUG_MSG_SIZE);
-        let dst = slice::from_raw_parts_mut(DEBUG_BUFFER.as_mut_ptr(), DEBUG_MSG_SIZE);
-        dst.copy_from_slice(src);
-        js_log_msg();
+    macro_rules! dbg {
+        ($($arg:tt)*) => (debug::log_string(alloc::format!($($arg)*)))
     }
 }
-
-fn log_string(src_str: String) {
-    log(&src_str.to_string());
+#[cfg(not(debug_assertions))]
+#[macro_use]
+mod debug {
+    macro_rules! dbg {
+        ($($arg:tt)*) => {{}};
+    }
 }
 
 // Compiler calming
 // implementing abort:
 // https://github.com/rust-lang/rust/issues/61119
 #[panic_handler]
-fn handle_panic(_: &core::panic::PanicInfo) -> ! {
+fn handle_panic(panic_info: &core::panic::PanicInfo) -> ! {
     unsafe {
-        log("Panic!");
+        if cfg!(debug_assertions) {
+            match panic_info.payload().downcast_ref::<&str>() {
+                Some(v) => dbg!("Panic: {}", v),
+                None => dbg!("Unknown Panic"),
+            };
+        }
         abort()
     }
 }
@@ -108,13 +114,9 @@ impl<T> BoxedSlice<T> {
         unsafe {
             let layout = Layout::from_size_align_unchecked(alloc_size, align);
             let ptr = alloc(layout) as *mut T;
-            let s = slice::from_raw_parts_mut(ptr, alloc_size);
+            let s = slice::from_raw_parts_mut(ptr, size);
             BoxedSlice(Box::from_raw(s))
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len() / mem::size_of::<T>()
     }
 }
 impl<T> Deref for BoxedSlice<T> {
@@ -245,7 +247,7 @@ static BOTTOM: u32 = rgb(0, 0, 0);
 struct HSV(f32, f32, f32);
 
 // golfing to do here...
-fn build_palette(gradients: BoxedSlice<[&HSV; 2]>, steps_per_grad: usize) -> BoxedSlice<u32> {
+fn build_palette(gradients: &BoxedSlice<[&HSV; 2]>, steps_per_grad: usize) -> BoxedSlice<u32> {
     let num_gradients = gradients.len();
     let mut palette = BoxedSlice::with_size(num_gradients * steps_per_grad);
     // can shave ~200b here
@@ -268,7 +270,8 @@ fn mandel_color(i: u64, palette: &BoxedSlice<u32>) -> u32 {
     if i == 0 {
         BOTTOM
     } else {
-        palette[((i - 1) % palette.len() as u64) as usize]
+        // This is on the hot loop, can len be removed?
+        palette[(i % palette.len() as u64) as usize]
     }
 }
 
@@ -316,7 +319,7 @@ fn render_frame_safe(
         [&orange, &orange_black],
     ]));
 
-    let palette = build_palette(gradients, 4);
+    let palette = build_palette(&gradients, 4);
 
     for y in 0..height {
         for x in 0..width {
