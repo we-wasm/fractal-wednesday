@@ -15,7 +15,7 @@ use core::f32;
 use core::ffi::c_void;
 use core::intrinsics::abort;
 use core::mem;
-use core::ops::{Add, Deref, DerefMut};
+use core::ops::{Add, Deref, DerefMut, Index, IndexMut};
 
 // Debugging
 #[cfg(debug_assertions)]
@@ -98,7 +98,7 @@ extern "C" fn eh_personality() {}
 pub struct TileBuffer {
     w: u32,
     h: u32,
-    buf: BoxedSlice<u32>,
+    buf: BoxedSlice<RGB>,
 }
 
 // Golfing away vec...
@@ -131,6 +131,18 @@ impl<T> DerefMut for BoxedSlice<T> {
         &mut self.0
     }
 }
+impl<T> Index<usize> for BoxedSlice<T> {
+    type Output = T;
+
+    fn index(&self, i: usize) -> &T {
+        unsafe { self.get_unchecked(i) }
+    }
+}
+impl<T> IndexMut<usize> for BoxedSlice<T> {
+    fn index_mut(&mut self, i: usize) -> &mut T {
+        unsafe { self.get_unchecked_mut(i) }
+    }
+}
 // implementing a bounds unchecked slice access would shave some kb
 
 // http://jakegoulding.com/rust-ffi-omnibus/objects/
@@ -149,10 +161,10 @@ unsafe fn ref_tile(tile_ptr: *mut c_void) -> &'static mut TileBuffer {
 }
 
 #[no_mangle]
-pub extern "C" fn get_buffer(tile_ptr: *mut c_void) -> *mut u32 {
+pub extern "C" fn get_buffer(tile_ptr: *mut c_void) -> *mut c_void {
     let tile = unsafe { ref_tile(tile_ptr) };
 
-    tile.buf.as_mut_ptr()
+    tile.buf.as_mut_ptr() as *mut c_void
 }
 
 #[no_mangle]
@@ -214,59 +226,62 @@ fn mandel_iter(max_iter: u64, c: Complex) -> u64 {
     }
 }
 
-const fn rgb(r: u8, g: u8, b: u8) -> u32 {
-    255 << 24 | ((b as u32) << 16) | ((g as u32) << 8) | (r as u32)
+// With this byte order javascript can copy it straight into canvas
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RGB {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
 }
 
-fn rgbf(r: f32, g: f32, b: f32) -> u32 {
-    rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+fn tween_one(progress: i32, from: u8, to: u8) -> u8 {
+    let from = from as i32;
+    let to = to as i32;
+    (from + (to - from) * progress / 255) as u8
 }
 
-fn tween(progress: f32, s_low: f32, s_high: f32) -> f32 {
-    (progress * (s_high - s_low)) + s_low
-}
+impl RGB {
+    fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b, a: 255 }
+    }
 
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
-    let i = (h * 6.0) as u8 as f32;
-    let f = h * 6.0 - i;
-    let p = v * (1.0 - s);
-    let q = v * (1.0 - f * s);
-    let t = v * (1.0 - (1.0 - f) * s);
-    match h {
-        h if h < 0.16666666666 => rgbf(v, t, p),
-        h if h < 0.33333333333 => rgbf(q, v, p),
-        h if h < 0.5 => rgbf(p, v, t),
-        h if h < 0.66666666666 => rgbf(p, q, v),
-        h if h < 0.83333333333 => rgbf(t, p, v),
-        _ => rgbf(v, p, q),
+    fn tween(&self, progress: i32, to: &RGB) -> RGB {
+        RGB::rgb(
+            tween_one(progress, self.r, to.r),
+            tween_one(progress, self.g, to.g),
+            tween_one(progress, self.b, to.b),
+            // This invalid code saves 2k?
+            // (to.r as u16 * 255 / progress) as u8,
+        )
     }
 }
 
-static BOTTOM: u32 = rgb(0, 0, 0);
-
-struct HSV(f32, f32, f32);
+static BOTTOM: RGB = RGB {
+    r: 0,
+    g: 0,
+    b: 0,
+    a: 255,
+};
 
 // golfing to do here...
-fn build_palette(gradients: &BoxedSlice<[&HSV; 2]>, steps_per_grad: usize) -> BoxedSlice<u32> {
+fn build_palette(gradients: &BoxedSlice<[&RGB; 2]>, steps_per_grad: usize) -> BoxedSlice<RGB> {
     let num_gradients = gradients.len();
     let mut palette = BoxedSlice::with_size(num_gradients * steps_per_grad);
-    // can shave ~200b here
     for i in 0..num_gradients {
         let color = gradients[i][0];
         let next_color = gradients[i][1];
         for step in 0..steps_per_grad {
-            let progress = step as f32 / steps_per_grad as f32;
-            let h = tween(progress, color.0, next_color.0);
-            let s = tween(progress, color.1, next_color.1);
-            let v = tween(progress, color.2, next_color.2);
+            let progress = (step * 255 / steps_per_grad) as i32;
 
-            palette[i * steps_per_grad + step] = hsv_to_rgb(h, s, v);
+            palette[i * steps_per_grad + step] = color.tween(progress, next_color);
         }
     }
     palette
 }
 
-fn mandel_color(i: u64, palette: &BoxedSlice<u32>) -> u32 {
+fn mandel_color(i: u64, palette: &BoxedSlice<RGB>) -> RGB {
     if i == 0 {
         BOTTOM
     } else {
@@ -303,20 +318,16 @@ fn render_frame_safe(
     let step = (viewport_width / width as f32) as f64;
     let start_re = (center_re - viewport_width / 2.0) as f64;
     let start_im = (center_im - (viewport_width * (height as f32 / width as f32)) / 2.0) as f64;
-    let blue_h = 0.548;
-    let orng_h = 0.0822;
-    let blue_black = HSV(blue_h, 1.0, 0.0);
-    let blue = HSV(blue_h, 1.0, 1.0);
-    let blue_white = HSV(blue_h, 0.0, 1.0);
-    let orange_white = HSV(orng_h, 0.0, 1.0);
-    let orange = HSV(orng_h, 1.0, 1.0);
-    let orange_black = HSV(orng_h, 1.0, 0.0);
+    let blue = RGB::rgb(0, 183, 255);
+    let orange = RGB::rgb(255, 128, 0);
+    let black = RGB::rgb(0, 0, 0);
+    let white = RGB::rgb(255, 255, 255);
 
     let gradients = BoxedSlice(Box::from([
-        [&blue_black, &blue],
-        [&blue, &blue_white],
-        [&orange_white, &orange],
-        [&orange, &orange_black],
+        [&black, &blue],
+        [&blue, &white],
+        [&white, &orange],
+        [&orange, &black],
     ]));
 
     let palette = build_palette(&gradients, 4);
