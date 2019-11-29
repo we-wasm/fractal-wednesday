@@ -13,19 +13,17 @@
     }
   </style>
   <script type="module">
-    import init from './bindgen_fractal.js';
+    import init, { render } from './bindgen_fractal.js';
     async function init_this() {
-
-      const { render } = await init('./bindgen_fractal_bg.wasm');
+      const wasm_exports = await init();
 
       function renderToCanvas(canvas) {
         const { width, height } = canvas;
         const start = performance.now();
         const ctx = canvas.getContext('2d');
-        console.log(ctx);
         render(ctx, width, height, 100, -0.5, 0.0, 3.0);
         const elapsed = performance.now() - start;
-        console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${instance.exports.memory.buffer.byteLength / 1000000}M`);
+        console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${wasm_exports.memory.buffer.byteLength / 1000000}M`);
       }
 
       const canvas = document.getElementById("demo-canvas");
