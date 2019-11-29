@@ -2,6 +2,7 @@ extern crate wasm_bindgen;
 extern crate wee_alloc;
 
 use std::ops::Add;
+use std::slice;
 
 use web_sys::{CanvasRenderingContext2d, ImageData};
 
@@ -11,32 +12,53 @@ use wasm_bindgen::Clamped;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-#[wasm_bindgen]
-extern "C" {
-    // Use `js_namespace` here to bind `console.log(..)` instead of just
-    // `log(..)`
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
+#[cfg(debug_assertions)]
+#[macro_use]
+mod debug {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen]
+    extern "C" {
+        // Use `js_namespace` here to bind `console.log(..)` instead of just
+        // `log(..)`
+        #[wasm_bindgen(js_namespace = console)]
+        pub fn log(s: &str);
+    }
 
-macro_rules! console_log {
-    // Note that this is using the `log` function imported above during
-    // `bare_bones`
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+    macro_rules! dbg {
+        // Note that this is using the `log` function imported above during
+        // `bare_bones`
+        ($($t:tt)*) => (debug::log(&format_args!($($t)*).to_string()))
+    }
+}
+#[cfg(not(debug_assertions))]
+#[macro_use]
+mod debug {
+    macro_rules! dbg {
+        ($($arg:tt)*) => {{}};
+    }
 }
 
 pub struct TileBuffer {
-    w: u32,
-    h: u32,
+    w: usize,
+    h: usize,
     buf: Vec<RGB>,
 }
 
 impl TileBuffer {
-    fn with_size(width: u32, height: u32) -> Self {
+    fn with_size(width: usize, height: usize) -> Self {
         TileBuffer {
             w: width,
             h: height,
             buf: Vec::with_capacity((width * height) as usize),
+        }
+    }
+
+    fn get_mut_buf(&mut self) -> &mut [u8] {
+        // the buf is exactly the same as the expected array of bytes
+        // just represented in chunks of 4
+        unsafe {
+            let u8_ptr = &mut *(self.buf.as_mut_ptr() as *mut RGB as *mut u8);
+            slice::from_raw_parts_mut(u8_ptr, self.w * self.h * 4)
         }
     }
 }
@@ -96,7 +118,7 @@ struct RGB {
     r: u8,
     g: u8,
     b: u8,
-    a: u8,
+    _a: u8,
 }
 
 fn tween_one(progress: i32, from: u8, to: u8) -> u8 {
@@ -107,7 +129,7 @@ fn tween_one(progress: i32, from: u8, to: u8) -> u8 {
 
 impl RGB {
     fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b, a: 255 }
+        Self { r, g, b, _a: 255 }
     }
 
     fn tween(&self, progress: i32, to: &RGB) -> RGB {
@@ -125,7 +147,7 @@ static BOTTOM: RGB = RGB {
     r: 0,
     g: 0,
     b: 0,
-    a: 255,
+    _a: 255,
 };
 
 // golfing to do here...
@@ -137,14 +159,13 @@ fn build_palette(gradients: &Vec<[&RGB; 2]>, steps_per_grad: usize) -> Vec<RGB> 
         let next_color = gradients[i][1];
         for step in 0..steps_per_grad {
             let progress = (step * 255 / steps_per_grad) as i32;
-
-            palette[i * steps_per_grad + step] = color.tween(progress, next_color);
+            palette.push(color.tween(progress, next_color));
         }
     }
     palette
 }
 
-fn mandel_color(i: u64, palette: &Vec<&RGB>) -> RGB {
+fn mandel_color(i: u64, palette: &Vec<RGB>) -> RGB {
     if i == 0 {
         BOTTOM
     } else {
@@ -155,20 +176,23 @@ fn mandel_color(i: u64, palette: &Vec<&RGB>) -> RGB {
 
 // Javascript jams
 #[wasm_bindgen]
-pub extern "C" fn render(
+pub fn render(
     ctx: &CanvasRenderingContext2d,
-    width: u32,
-    height: u32,
+    width: usize,
+    height: usize,
     max_iter: u32,
     center_re: f32,
     center_im: f32,
     viewport_width: f32,
 ) -> Result<(), JsValue> {
-    console_log!("Rendering a {}x{} fractal", width, height);
+    dbg!("Rendering a {}x{} fractal", width, height);
     let mut tile = TileBuffer::with_size(width, height);
     render_tile(&mut tile, max_iter, center_re, center_im, viewport_width);
-    let data =
-        ImageData::new_with_u8_clamped_array_and_sh(Clamped(tile.buf.as_mut_ptr()), width, height)?;
+    let data = ImageData::new_with_u8_clamped_array_and_sh(
+        Clamped(tile.get_mut_buf()),
+        width as u32,
+        height as u32,
+    )?;
     ctx.put_image_data(&data, 0.0, 0.0)
 }
 
@@ -203,7 +227,7 @@ fn render_tile(
 
     for y in 0..height {
         for x in 0..width {
-            let c = mandel_color(
+            tile.buf.push(mandel_color(
                 mandel_iter(
                     max_iter as u64,
                     Complex {
@@ -212,8 +236,7 @@ fn render_tile(
                     },
                 ),
                 &palette,
-            );
-            tile.buf[(y * width + x) as usize] = c;
+            ));
         }
     }
 }

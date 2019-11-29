@@ -1,13 +1,13 @@
 #!/bin/bash
 
-set -euo pipefail
+set -e
 
-PROJECT=bare_metal_fractal
+PACKAGE=bindgen_fractal
+BINARY=pkg/${PACKAGE}_bg.wasm
 
-TARGET=wasm32-unknown-unknown
-BINARY=../target/$TARGET/debug/$PROJECT.wasm
-
-cargo +nightly build --target $TARGET
-cp $BINARY www/$PROJECT.wasm
+wasm-pack build --target=web --dev .
 mkdir -p www
-ls -lh www/$PROJECT.wasm
+cp $BINARY www/${PACKAGE}_bg.wasm
+cp pkg/${PACKAGE}.js www/${PACKAGE}.js
+ls -lh www/${PACKAGE}_bg.wasm
+ls -lh www/${PACKAGE}.js

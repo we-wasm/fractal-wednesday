@@ -13,52 +13,17 @@
     }
   </style>
   <script type="module">
-    async function init() {
+    import init from './bindgen_fractal.js';
+    async function init_this() {
 
-      const { instance } = await WebAssembly.instantiateStreaming(
-        fetch("./bare_metal_fractal.wasm"),
-        {
-          "env": {
-            js_log_msg
-          },
-        }
-      );
-
-      const { alloc_tile, free_tile, get_buffer, render, get_debug_buffer, get_debug_msg_size } = instance.exports;
-
-      function js_log_msg() {
-        const offset = get_debug_buffer();
-        const msgSize = get_debug_msg_size();
-        const stringBuffer = new Uint8Array(instance.exports.memory.buffer, offset, msgSize);
-        let str = '';
-        for (let i = 0; i < stringBuffer.length; i++) {
-          str += String.fromCharCode(stringBuffer[i]);
-        }
-        console.log(str);
-      }
-
-      // https://stackoverflow.com/questions/51659292/javascript-arraybuffer-detaches-when-constructing-a-new-rust-vec-via-wasm
-      // this pointer is invalidated when the wasm memory buffer is grown?
-
-      function getImageData(t, width, height) {
-        return new ImageData(
-          new Uint8ClampedArray(
-            instance.exports.memory.buffer,
-            get_buffer(t),
-            4 * width * height
-          ),
-          width
-        );
-      }
+      const { render } = await init('./bindgen_fractal_bg.wasm');
 
       function renderToCanvas(canvas) {
         const { width, height } = canvas;
         const start = performance.now();
-        const tile = alloc_tile(width, height);
-        render(tile, 100, -0.5, 0.0, 3.0);
-        const ctx = canvas.getContext("2d");
-        ctx.putImageData(getImageData(tile, width, height), 0, 0);
-        free_tile(tile);
+        const ctx = canvas.getContext('2d');
+        console.log(ctx);
+        render(ctx, width, height, 100, -0.5, 0.0, 3.0);
         const elapsed = performance.now() - start;
         console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${instance.exports.memory.buffer.byteLength / 1000000}M`);
       }
@@ -82,7 +47,7 @@
       }, 100);
     }
 
-    init();
+    init_this();
   </script>
 </head>
 
