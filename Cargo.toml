@@ -6,4 +6,5 @@ members = [
     "fractal-rs",
     "bare-metal-wasm",
     "bare-metal-fractal",
+    "bindgen-fractal",
 ]
