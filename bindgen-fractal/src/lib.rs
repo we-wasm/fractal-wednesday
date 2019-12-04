@@ -114,6 +114,7 @@ fn mandel_iter(max_iter: u64, c: Complex) -> u64 {
 
 // With this byte order javascript can copy it straight into canvas
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct RGB {
     r: u8,
     g: u8,
@@ -174,20 +175,79 @@ fn mandel_color(i: u64, palette: &Vec<RGB>) -> RGB {
     }
 }
 
+struct Viewport {
+    center: Complex,
+    width: f64,
+    max_iter: u64,
+}
+
+enum MouseState {
+    Up,
+    Down(f32, f32),
+}
+struct UiState {
+    viewport: &Viewport,
+    mouse: &MouseState,
+}
+enum UiAction {
+    MouseUp,
+    MouseDown(f32, f32),
+    MouseMove(f32, f32),
+}
+
+pub fn handle_action(a: UiAction, s: &UiState) -> UiState {
+    match a {
+        UiAction::MouseUp => UiState {
+            viewport: s.viewport,
+            mouse: MouseState::Up,
+        },
+        UiAction::MouseDown(u, v) => UiState {
+            viewport: s.viewport,
+            mouse: MouseState::Down(u, v),
+        },
+        UiAction::MouseMove(u, v) => UiState {
+            viewport: s.viewport,
+            mouse: MouseState::Down(u, v),
+        },
+    }
+}
+
+static mut UI_STATE: &UiState = &UiState {
+    viewport: Viewport {
+        center: Complex { re: -0.5, im: 0.0 },
+        width: 3.0,
+        max_iter: 100,
+    },
+    mouse: MouseState::Up,
+};
+
 // Javascript jams
 #[wasm_bindgen]
-pub fn render(
-    ctx: &CanvasRenderingContext2d,
-    width: usize,
-    height: usize,
-    max_iter: u32,
-    center_re: f32,
-    center_im: f32,
-    viewport_width: f32,
-) -> Result<(), JsValue> {
+pub fn mouse_down(u: f32, v: f32) {
+    unsafe {
+        UI_STATE = &handle_action(UiAction::MouseDown(u, v), UI_STATE);
+    }
+}
+
+#[wasm_bindgen]
+pub fn mouse_up() {
+    unsafe {
+        UI_STATE = &handle_action(UiAction::MouseUp, UI_STATE);
+    }
+}
+
+#[wasm_bindgen]
+pub fn mouse_move(u: f32, v: f32) {
+    unsafe {
+        UI_STATE = &handle_action(UiAction::MouseMove(u, v), UI_STATE);
+    }
+}
+
+#[wasm_bindgen]
+pub fn render(ctx: &CanvasRenderingContext2d, width: usize, height: usize) -> Result<(), JsValue> {
     dbg!("Rendering a {}x{} fractal", width, height);
     let mut tile = TileBuffer::with_size(width, height);
-    render_tile(&mut tile, max_iter, center_re, center_im, viewport_width);
+    render_tile(&mut tile, UI_STATE.viewport);
     let data = ImageData::new_with_u8_clamped_array_and_sh(
         Clamped(tile.get_mut_buf()),
         width as u32,
@@ -198,15 +258,12 @@ pub fn render(
 
 // We split this out so that we can escape 'unsafe' as quickly
 // as possible.
-fn render_tile(
-    tile: &mut TileBuffer,
-    max_iter: u32,
-    center_re: f32,
-    center_im: f32,
-    viewport_width: f32,
-) {
+fn render_tile(tile: &mut TileBuffer, viewport: &Viewport) {
     let width = tile.w;
     let height = tile.h;
+    let viewport_width = viewport.width;
+    let center_re = viewport.center.re;
+    let center_im = viewport.center.im;
 
     let step = (viewport_width / width as f32) as f64;
     let start_re = (center_re - viewport_width / 2.0) as f64;
