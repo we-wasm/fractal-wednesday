@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      margin: 0;
+    }
+
+    #demo-canvas {
+      position: absolute;
+    }
+  </style>
+  <script type="module">
+    import init, { render } from './bindgen_fractal.js';
+    async function init_this() {
+      const wasm_exports = await init();
+
+      function renderToCanvas(canvas) {
+        const { width, height } = canvas;
+        const start = performance.now();
+        const ctx = canvas.getContext('2d');
+        render(ctx, width, height, 100, -0.5, 0.0, 3.0);
+        const elapsed = performance.now() - start;
+        console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${wasm_exports.memory.buffer.byteLength / 1000000}M`);
+      }
+
+      const canvas = document.getElementById("demo-canvas");
+      const body = document.getElementsByTagName('body')[0];
+      function getSize() {
+        return {
+          width: window.innerWidth,
+          height: window.innerHeight
+        }
+      }
+      let lastW, lastH;
+      setInterval(() => {
+        const { width, height } = getSize();
+        if (lastW !== width || lastH !== height) {
+          canvas.width = lastW = width;
+          canvas.height = lastH = height;
+          renderToCanvas(canvas);
+        }
+      }, 100);
+    }
+
+    init_this();
+  </script>
+</head>
+
+<body>
+  <canvas id="demo-canvas"></canvas>
+</body>
+
+</html>
