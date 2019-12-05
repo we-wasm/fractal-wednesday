@@ -13,48 +13,55 @@
     }
   </style>
   <script type="module">
-    import init, { render, mouse_down, mouse_up, mouse_move } from './bindgen_fractal.js';
+    /** @type {import('../pkg/bindgen_fractal.d.ts')} */
+    import init, { mount, resize, mouse_down, mouse_up, mouse_move } from './bindgen_fractal.js';
     async function init_this() {
       const wasm_exports = await init();
 
-      // function renderToCanvas(canvas) {
-      //   const { width, height } = canvas;
-      //   const start = performance.now();
-      //   const ctx = canvas.getContext('2d');
-      //   const elapsed = performance.now() - start;
-      //   console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${wasm_exports.memory.buffer.byteLength / 1000000}M`);
-      // }
-
       const canvas = document.getElementById("demo-canvas");
-      
-      canvas.addEventListener("mousedown", () => {
-        const {width,height} = getSize();
-        mouse_move(e.offsetX/width, e.offsetY/height);;
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      function initCanvas(canvas) {
+        const { width, height } = canvas;
+        const start = performance.now();
+        const ctx = canvas.getContext('2d');
+        const uiState = mount(ctx, width, height);
+        const elapsed = performance.now() - start;
+        console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${wasm_exports.memory.buffer.byteLength / 1000000}M`);
+        return uiState;
+      }
+
+      const uiState = initCanvas(canvas);
+
+      canvas.addEventListener("mousedown", (e) => {
+        const { width, height } = getSize();
+        mouse_down(uiState, e.offsetX / width, e.offsetY / height);;
       });
       canvas.addEventListener("mouseup", () => {
-        mouse_up();
+        mouse_up(uiState);
       });
       canvas.addEventListener("mousemove", (e) => {
-        const {width,height} = getSize();
-        mouse_move(e.offsetX/width, e.offsetY/height);
+        const { width, height } = getSize();
+        mouse_move(uiState, e.offsetX / width, e.offsetY / height);
       });
 
-      const body = document.getElementsByTagName('body')[0];
       function getSize() {
         return {
           width: window.innerWidth,
           height: window.innerHeight
         }
       }
-      let lastW, lastH;
+
+      /* let lastW, lastH;
       setInterval(() => {
         const { width, height } = getSize();
         if (lastW !== width || lastH !== height) {
           canvas.width = lastW = width;
           canvas.height = lastH = height;
-          renderToCanvas(canvas);
+          console.log("Resizing but not really")
         }
-      }, 100);
+      }, 100); */
     }
 
     init_this();

@@ -1,6 +1,8 @@
 extern crate wasm_bindgen;
 extern crate wee_alloc;
 
+use std::ffi::c_void;
+use std::mem::forget;
 use std::ops::Add;
 use std::slice;
 
@@ -185,115 +187,165 @@ enum MouseState {
     Up,
     Down(f32, f32),
 }
-struct UiState {
-    viewport: &Viewport,
-    mouse: &MouseState,
+struct UiState<'a> {
+    viewport: Viewport,
+    mouse: MouseState,
+    tile: TileBuffer,
+    ctx: &'a CanvasRenderingContext2d,
 }
+
 enum UiAction {
     MouseUp,
     MouseDown(f32, f32),
     MouseMove(f32, f32),
+    Resize(usize, usize),
 }
 
-pub fn handle_action(a: UiAction, s: &UiState) -> UiState {
-    match a {
-        UiAction::MouseUp => UiState {
-            viewport: s.viewport,
+impl<'a> UiState<'a> {
+    pub fn init(ctx: &CanvasRenderingContext2d, width: usize, height: usize) -> UiState {
+        dbg!("Instantiating");
+        UiState {
+            tile: TileBuffer::with_size(width, height),
+            viewport: Viewport {
+                center: Complex { re: -0.5, im: 0.0 },
+                width: 3.0,
+                max_iter: 100,
+            },
+            ctx,
             mouse: MouseState::Up,
-        },
-        UiAction::MouseDown(u, v) => UiState {
-            viewport: s.viewport,
-            mouse: MouseState::Down(u, v),
-        },
-        UiAction::MouseMove(u, v) => UiState {
-            viewport: s.viewport,
-            mouse: MouseState::Down(u, v),
-        },
+        }
+    }
+
+    pub fn handle(&mut self, a: UiAction) {
+        match a {
+            UiAction::MouseUp => self.mouse = MouseState::Up,
+            UiAction::MouseDown(u, v) => self.mouse = MouseState::Down(u, v),
+            UiAction::MouseMove(u, v) => {
+                // TODO: mutate viewport based on a.mouse - s.mouse
+                // self.viewport = manipulate viewport
+                if let MouseState::Down(_prev_u, _prev_v) = self.mouse {
+                    dbg!("Detected drag");
+                    self.mouse = MouseState::Down(u, v);
+                    self.render();
+                }
+            }
+            UiAction::Resize(w, h) => {
+                dbg!("Resizing");
+                self.tile = TileBuffer::with_size(w, h);
+                self.render();
+            }
+        }
+    }
+
+    fn render(&mut self) {
+        dbg!("Rendering");
+        let tile = &mut self.tile;
+        let width = tile.w;
+        let height = tile.h;
+        let viewport = &self.viewport;
+        let viewport_width = viewport.width;
+        let center_re = viewport.center.re;
+        let center_im = viewport.center.im;
+        let max_iter = viewport.max_iter;
+
+        let step = viewport_width / width as f64;
+        let start_re = (center_re - viewport_width / 2.0) as f64;
+        let start_im = (center_im - (viewport_width * (height as f64 / width as f64)) / 2.0) as f64;
+        let blue = RGB::rgb(0, 183, 255);
+        let orange = RGB::rgb(255, 128, 0);
+        let black = RGB::rgb(0, 0, 0);
+        let white = RGB::rgb(255, 255, 255);
+
+        let gradients = vec![
+            [&black, &blue],
+            [&blue, &white],
+            [&white, &orange],
+            [&orange, &black],
+        ];
+
+        let palette = build_palette(&gradients, 4);
+
+        for y in 0..height {
+            for x in 0..width {
+                tile.buf.push(mandel_color(
+                    mandel_iter(
+                        max_iter as u64,
+                        Complex {
+                            re: start_re + ((x as f64) * step),
+                            im: start_im + ((y as f64) * step),
+                        },
+                    ),
+                    &palette,
+                ));
+            }
+        }
+
+        let data = ImageData::new_with_u8_clamped_array_and_sh(
+            Clamped(tile.get_mut_buf()),
+            width as u32,
+            height as u32,
+        )
+        .unwrap();
+        self.ctx.put_image_data(&data, 0.0, 0.0).unwrap();
     }
 }
 
-static mut UI_STATE: &UiState = &UiState {
-    viewport: Viewport {
-        center: Complex { re: -0.5, im: 0.0 },
-        width: 3.0,
-        max_iter: 100,
-    },
-    mouse: MouseState::Up,
-};
+impl<'a> Drop for UiState<'a> {
+    fn drop(&mut self) {
+        dbg!("Dropping ui state");
+    }
+}
+
+// when this boi is dropped it should be converted
+#[wasm_bindgen]
+pub struct OpaqueUiState(*const c_void);
+impl Drop for OpaqueUiState {
+    fn drop(&mut self) {
+        dbg!("Dropping opaque ui state");
+    }
+}
+
+impl<'a> From<*mut OpaqueUiState> for &'a mut UiState<'a> {
+    fn from(p: *mut OpaqueUiState) -> &'a mut UiState<'a> {
+        unsafe { &mut *(p as *mut UiState<'a>) }
+    }
+}
+
+impl<'a> From<UiState<'a>> for OpaqueUiState {
+    fn from(mut s: UiState<'a>) -> OpaqueUiState {
+        OpaqueUiState((&mut s) as *mut _ as *const c_void)
+    }
+}
 
 // Javascript jams
 #[wasm_bindgen]
-pub fn mouse_down(u: f32, v: f32) {
-    unsafe {
-        UI_STATE = &handle_action(UiAction::MouseDown(u, v), UI_STATE);
-    }
+pub fn mount(ctx: &CanvasRenderingContext2d, width: usize, height: usize) -> *mut OpaqueUiState {
+    dbg!("Mounting a {}x{} fractal", width, height);
+    let mut ui_state = UiState::init(ctx, width, height);
+    ui_state.render();
+    &mut ui_state.into()
 }
 
 #[wasm_bindgen]
-pub fn mouse_up() {
-    unsafe {
-        UI_STATE = &handle_action(UiAction::MouseUp, UI_STATE);
-    }
+pub fn resize(s: *mut OpaqueUiState, width: usize, height: usize) {
+    let ui_state: &mut UiState = s.into();
+    ui_state.handle(UiAction::Resize(width, height));
 }
 
 #[wasm_bindgen]
-pub fn mouse_move(u: f32, v: f32) {
-    unsafe {
-        UI_STATE = &handle_action(UiAction::MouseMove(u, v), UI_STATE);
-    }
+pub fn mouse_down(s: *mut OpaqueUiState, u: f32, v: f32) {
+    let ui_state: &mut UiState = s.into();
+    ui_state.handle(UiAction::MouseDown(u, v));
 }
 
 #[wasm_bindgen]
-pub fn render(ctx: &CanvasRenderingContext2d, width: usize, height: usize) -> Result<(), JsValue> {
-    dbg!("Rendering a {}x{} fractal", width, height);
-    let mut tile = TileBuffer::with_size(width, height);
-    render_tile(&mut tile, UI_STATE.viewport);
-    let data = ImageData::new_with_u8_clamped_array_and_sh(
-        Clamped(tile.get_mut_buf()),
-        width as u32,
-        height as u32,
-    )?;
-    ctx.put_image_data(&data, 0.0, 0.0)
+pub fn mouse_up(s: *mut OpaqueUiState) {
+    let ui_state: &mut UiState = s.into();
+    ui_state.handle(UiAction::MouseUp);
 }
 
-// We split this out so that we can escape 'unsafe' as quickly
-// as possible.
-fn render_tile(tile: &mut TileBuffer, viewport: &Viewport) {
-    let width = tile.w;
-    let height = tile.h;
-    let viewport_width = viewport.width;
-    let center_re = viewport.center.re;
-    let center_im = viewport.center.im;
-
-    let step = (viewport_width / width as f32) as f64;
-    let start_re = (center_re - viewport_width / 2.0) as f64;
-    let start_im = (center_im - (viewport_width * (height as f32 / width as f32)) / 2.0) as f64;
-    let blue = RGB::rgb(0, 183, 255);
-    let orange = RGB::rgb(255, 128, 0);
-    let black = RGB::rgb(0, 0, 0);
-    let white = RGB::rgb(255, 255, 255);
-
-    let gradients = vec![
-        [&black, &blue],
-        [&blue, &white],
-        [&white, &orange],
-        [&orange, &black],
-    ];
-
-    let palette = build_palette(&gradients, 4);
-
-    for y in 0..height {
-        for x in 0..width {
-            tile.buf.push(mandel_color(
-                mandel_iter(
-                    max_iter as u64,
-                    Complex {
-                        re: start_re + ((x as f64) * step),
-                        im: start_im + ((y as f64) * step),
-                    },
-                ),
-                &palette,
-            ));
-        }
-    }
+#[wasm_bindgen]
+pub fn mouse_move(s: *mut OpaqueUiState, u: f32, v: f32) {
+    let ui_state: &mut UiState = s.into();
+    ui_state.handle(UiAction::MouseMove(u, v));
 }

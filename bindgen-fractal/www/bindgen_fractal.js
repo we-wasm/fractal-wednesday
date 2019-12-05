@@ -1,31 +1,6 @@
 
 let wasm;
 
-/**
-*/
-export function mouse_down() {
-    wasm.mouse_down();
-}
-
-/**
-*/
-export function mouse_up() {
-    wasm.mouse_up();
-}
-
-function _assertNum(n) {
-    if (typeof(n) !== 'number') throw new Error('expected a number argument');
-}
-/**
-* @param {number} x
-* @param {number} y
-*/
-export function mouse_move(x, y) {
-    _assertNum(x);
-    _assertNum(y);
-    wasm.mouse_move(x, y);
-}
-
 const heap = new Array(32);
 
 heap.fill(undefined);
@@ -43,51 +18,49 @@ function addBorrowedObject(obj) {
 * @param {any} ctx
 * @param {number} width
 * @param {number} height
-* @param {number} max_iter
-* @param {number} center_re
-* @param {number} center_im
-* @param {number} viewport_width
+* @returns {number}
 */
-export function render(ctx, width, height, max_iter, center_re, center_im, viewport_width) {
-    _assertNum(width);
-    _assertNum(height);
-    _assertNum(max_iter);
-    _assertNum(center_re);
-    _assertNum(center_im);
-    _assertNum(viewport_width);
+export function mount(ctx, width, height) {
     try {
-        wasm.render(addBorrowedObject(ctx), width, height, max_iter, center_re, center_im, viewport_width);
+        const ret = wasm.mount(addBorrowedObject(ctx), width, height);
+        return ret;
     } finally {
         heap[stack_pointer++] = undefined;
     }
 }
 
-function logError(e) {
-    let error = (function () {
-        try {
-            return e instanceof Error ? `${e.message}\n\nStack:\n${e.stack}` : e.toString();
-        } catch(_) {
-            return "<failed to stringify thrown value>";
-        }
-    }());
-    console.error("wasm-bindgen: imported JS function that was not marked as `catch` threw an error:", error);
-    throw e;
+/**
+* @param {number} s
+* @param {number} width
+* @param {number} height
+*/
+export function resize(s, width, height) {
+    wasm.resize(s, width, height);
 }
 
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
-
-cachedTextDecoder.decode();
-
-let cachegetUint8Memory = null;
-function getUint8Memory() {
-    if (cachegetUint8Memory === null || cachegetUint8Memory.buffer !== wasm.memory.buffer) {
-        cachegetUint8Memory = new Uint8Array(wasm.memory.buffer);
-    }
-    return cachegetUint8Memory;
+/**
+* @param {number} s
+* @param {number} u
+* @param {number} v
+*/
+export function mouse_down(s, u, v) {
+    wasm.mouse_down(s, u, v);
 }
 
-function getStringFromWasm(ptr, len) {
-    return cachedTextDecoder.decode(getUint8Memory().subarray(ptr, ptr + len));
+/**
+* @param {number} s
+*/
+export function mouse_up(s) {
+    wasm.mouse_up(s);
+}
+
+/**
+* @param {number} s
+* @param {number} u
+* @param {number} v
+*/
+export function mouse_move(s, u, v) {
+    wasm.mouse_move(s, u, v);
 }
 
 function getObject(idx) { return heap[idx]; }
@@ -111,8 +84,6 @@ function addHeapObject(obj) {
     const idx = heap_next;
     heap_next = heap[idx];
 
-    if (typeof(heap_next) !== 'number') throw new Error('corrupt heap');
-
     heap[idx] = obj;
     return idx;
 }
@@ -133,6 +104,153 @@ function getClampedArrayU8FromWasm(ptr, len) {
     return getUint8ClampedMemory().subarray(ptr / 1, ptr / 1 + len);
 }
 
+let WASM_VECTOR_LEN = 0;
+
+let cachedTextEncoder = new TextEncoder('utf-8');
+
+const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
+    ? function (arg, view) {
+    return cachedTextEncoder.encodeInto(arg, view);
+}
+    : function (arg, view) {
+    const buf = cachedTextEncoder.encode(arg);
+    view.set(buf);
+    return {
+        read: arg.length,
+        written: buf.length
+    };
+});
+
+let cachegetUint8Memory = null;
+function getUint8Memory() {
+    if (cachegetUint8Memory === null || cachegetUint8Memory.buffer !== wasm.memory.buffer) {
+        cachegetUint8Memory = new Uint8Array(wasm.memory.buffer);
+    }
+    return cachegetUint8Memory;
+}
+
+function passStringToWasm(arg) {
+
+    let len = arg.length;
+    let ptr = wasm.__wbindgen_malloc(len);
+
+    const mem = getUint8Memory();
+
+    let offset = 0;
+
+    for (; offset < len; offset++) {
+        const code = arg.charCodeAt(offset);
+        if (code > 0x7F) break;
+        mem[ptr + offset] = code;
+    }
+
+    if (offset !== len) {
+        if (offset !== 0) {
+            arg = arg.slice(offset);
+        }
+        ptr = wasm.__wbindgen_realloc(ptr, len, len = offset + arg.length * 3);
+        const view = getUint8Memory().subarray(ptr + offset, ptr + len);
+        const ret = encodeString(arg, view);
+
+        offset += ret.written;
+    }
+
+    WASM_VECTOR_LEN = offset;
+    return ptr;
+}
+
+let cachegetInt32Memory = null;
+function getInt32Memory() {
+    if (cachegetInt32Memory === null || cachegetInt32Memory.buffer !== wasm.memory.buffer) {
+        cachegetInt32Memory = new Int32Array(wasm.memory.buffer);
+    }
+    return cachegetInt32Memory;
+}
+
+function debugString(val) {
+    // primitive types
+    const type = typeof val;
+    if (type == 'number' || type == 'boolean' || val == null) {
+        return  `${val}`;
+    }
+    if (type == 'string') {
+        return `"${val}"`;
+    }
+    if (type == 'symbol') {
+        const description = val.description;
+        if (description == null) {
+            return 'Symbol';
+        } else {
+            return `Symbol(${description})`;
+        }
+    }
+    if (type == 'function') {
+        const name = val.name;
+        if (typeof name == 'string' && name.length > 0) {
+            return `Function(${name})`;
+        } else {
+            return 'Function';
+        }
+    }
+    // objects
+    if (Array.isArray(val)) {
+        const length = val.length;
+        let debug = '[';
+        if (length > 0) {
+            debug += debugString(val[0]);
+        }
+        for(let i = 1; i < length; i++) {
+            debug += ', ' + debugString(val[i]);
+        }
+        debug += ']';
+        return debug;
+    }
+    // Test for built-in
+    const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+    let className;
+    if (builtInMatches.length > 1) {
+        className = builtInMatches[1];
+    } else {
+        // Failed to match the standard '[object ClassName]'
+        return toString.call(val);
+    }
+    if (className == 'Object') {
+        // we're a user defined class or Object
+        // JSON.stringify avoids problems with cycles, and is generally much
+        // easier than looping through ownProperties of `val`.
+        try {
+            return 'Object(' + JSON.stringify(val) + ')';
+        } catch (_) {
+            return 'Object';
+        }
+    }
+    // errors
+    if (val instanceof Error) {
+        return `${val.name}: ${val.message}\n${val.stack}`;
+    }
+    // TODO we could test for more things here, like `Set`s and `Map`s.
+    return className;
+}
+
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+
+cachedTextDecoder.decode();
+
+function getStringFromWasm(ptr, len) {
+    return cachedTextDecoder.decode(getUint8Memory().subarray(ptr, ptr + len));
+}
+/**
+*/
+export class OpaqueUiState {
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_opaqueuistate_free(ptr);
+    }
+}
+
 function init(module) {
     if (typeof module === 'undefined') {
         module = import.meta.url.replace(/\.js$/, '_bg.wasm');
@@ -140,44 +258,33 @@ function init(module) {
     let result;
     const imports = {};
     imports.wbg = {};
-    imports.wbg.__wbg_log_4e2449059c3be0c1 = function(arg0, arg1) {
-        try {
-            console.log(getStringFromWasm(arg0, arg1));
-        } catch (e) {
-            logError(e)
-        }
-    };
     imports.wbg.__wbindgen_object_drop_ref = function(arg0) {
         takeObject(arg0);
     };
     imports.wbg.__widl_f_put_image_data_CanvasRenderingContext2D = function(arg0, arg1, arg2, arg3) {
         try {
-            try {
-                getObject(arg0).putImageData(getObject(arg1), arg2, arg3);
-            } catch (e) {
-                handleError(e)
-            }
+            getObject(arg0).putImageData(getObject(arg1), arg2, arg3);
         } catch (e) {
-            logError(e)
+            handleError(e)
         }
     };
     imports.wbg.__widl_f_new_with_u8_clamped_array_and_sh_ImageData = function(arg0, arg1, arg2, arg3) {
         try {
-            try {
-                const ret = new ImageData(getClampedArrayU8FromWasm(arg0, arg1), arg2 >>> 0, arg3 >>> 0);
-                return addHeapObject(ret);
-            } catch (e) {
-                handleError(e)
-            }
+            const ret = new ImageData(getClampedArrayU8FromWasm(arg0, arg1), arg2 >>> 0, arg3 >>> 0);
+            return addHeapObject(ret);
         } catch (e) {
-            logError(e)
+            handleError(e)
         }
+    };
+    imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {
+        const ret = debugString(getObject(arg1));
+        const ret0 = passStringToWasm(ret);
+        const ret1 = WASM_VECTOR_LEN;
+        getInt32Memory()[arg0 / 4 + 0] = ret0;
+        getInt32Memory()[arg0 / 4 + 1] = ret1;
     };
     imports.wbg.__wbindgen_throw = function(arg0, arg1) {
         throw new Error(getStringFromWasm(arg0, arg1));
-    };
-    imports.wbg.__wbindgen_rethrow = function(arg0) {
-        throw takeObject(arg0);
     };
 
     if ((typeof URL === 'function' && module instanceof URL) || typeof module === 'string' || (typeof Request === 'function' && module instanceof Request)) {
