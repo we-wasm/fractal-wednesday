@@ -19,8 +19,8 @@
       const wasm_exports = await init();
 
       const canvas = document.getElementById("demo-canvas");
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      let lastW = canvas.width = window.innerWidth;
+      let lastH = canvas.height = window.innerHeight;
 
       function initCanvas(canvas) {
         const { width, height } = canvas;
@@ -53,15 +53,14 @@
         }
       }
 
-      /* let lastW, lastH;
       setInterval(() => {
         const { width, height } = getSize();
         if (lastW !== width || lastH !== height) {
           canvas.width = lastW = width;
           canvas.height = lastH = height;
-          console.log("Resizing but not really")
+          resize(uiState, width, height);
         }
-      }, 100); */
+      }, 100);
     }
 
     init_this();

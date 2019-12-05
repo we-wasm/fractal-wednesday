@@ -1,8 +1,6 @@
 extern crate wasm_bindgen;
 extern crate wee_alloc;
 
-use std::ffi::c_void;
-use std::mem::forget;
 use std::ops::Add;
 use std::slice;
 
@@ -51,7 +49,7 @@ impl TileBuffer {
         TileBuffer {
             w: width,
             h: height,
-            buf: Vec::with_capacity((width * height) as usize),
+            buf: vec![RGB::rgb(0, 0, 0); (width * height) as usize],
         }
     }
 
@@ -67,7 +65,7 @@ impl TileBuffer {
 
 // Complex coordination
 // https://rustwasm.github.io/wasm-bindgen/examples/julia.html
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Complex {
     re: f64,
     im: f64,
@@ -153,7 +151,6 @@ static BOTTOM: RGB = RGB {
     _a: 255,
 };
 
-// golfing to do here...
 fn build_palette(gradients: &Vec<[&RGB; 2]>, steps_per_grad: usize) -> Vec<RGB> {
     let num_gradients = gradients.len();
     let mut palette = Vec::with_capacity(num_gradients * steps_per_grad);
@@ -177,33 +174,42 @@ fn mandel_color(i: u64, palette: &Vec<RGB>) -> RGB {
     }
 }
 
-struct Viewport {
+#[derive(Debug)]
+pub struct Viewport {
     center: Complex,
     width: f64,
     max_iter: u64,
 }
 
-enum MouseState {
+impl Viewport {
+    fn translate(&mut self, u: f32, v: f32) {
+        self.center = Complex {
+            re: self.center.re + (self.width * u as f64),
+            im: self.center.im + (self.width * v as f64),
+        }
+    }
+}
+
+pub enum MouseState {
     Up,
     Down(f32, f32),
 }
-struct UiState<'a> {
+pub struct UiState {
     viewport: Viewport,
     mouse: MouseState,
     tile: TileBuffer,
-    ctx: &'a CanvasRenderingContext2d,
+    ctx: CanvasRenderingContext2d,
 }
 
-enum UiAction {
+pub enum UiAction {
     MouseUp,
     MouseDown(f32, f32),
     MouseMove(f32, f32),
     Resize(usize, usize),
 }
 
-impl<'a> UiState<'a> {
-    pub fn init(ctx: &CanvasRenderingContext2d, width: usize, height: usize) -> UiState {
-        dbg!("Instantiating");
+impl UiState {
+    pub fn init(ctx: CanvasRenderingContext2d, width: usize, height: usize) -> UiState {
         UiState {
             tile: TileBuffer::with_size(width, height),
             viewport: Viewport {
@@ -223,14 +229,14 @@ impl<'a> UiState<'a> {
             UiAction::MouseMove(u, v) => {
                 // TODO: mutate viewport based on a.mouse - s.mouse
                 // self.viewport = manipulate viewport
-                if let MouseState::Down(_prev_u, _prev_v) = self.mouse {
-                    dbg!("Detected drag");
+                if let MouseState::Down(prev_u, prev_v) = self.mouse {
+                    let scaled_v = (prev_v - v) * (self.tile.h as f32 / self.tile.w as f32);
+                    self.viewport.translate(prev_u - u, scaled_v);
                     self.mouse = MouseState::Down(u, v);
                     self.render();
                 }
             }
             UiAction::Resize(w, h) => {
-                dbg!("Resizing");
                 self.tile = TileBuffer::with_size(w, h);
                 self.render();
             }
@@ -238,7 +244,6 @@ impl<'a> UiState<'a> {
     }
 
     fn render(&mut self) {
-        dbg!("Rendering");
         let tile = &mut self.tile;
         let width = tile.w;
         let height = tile.h;
@@ -267,7 +272,7 @@ impl<'a> UiState<'a> {
 
         for y in 0..height {
             for x in 0..width {
-                tile.buf.push(mandel_color(
+                tile.buf[(y * width + x) as usize] = mandel_color(
                     mandel_iter(
                         max_iter as u64,
                         Complex {
@@ -276,7 +281,7 @@ impl<'a> UiState<'a> {
                         },
                     ),
                     &palette,
-                ));
+                );
             }
         }
 
@@ -290,62 +295,56 @@ impl<'a> UiState<'a> {
     }
 }
 
-impl<'a> Drop for UiState<'a> {
+impl Drop for UiState {
     fn drop(&mut self) {
         dbg!("Dropping ui state");
     }
 }
 
-// when this boi is dropped it should be converted
-#[wasm_bindgen]
-pub struct OpaqueUiState(*const c_void);
-impl Drop for OpaqueUiState {
-    fn drop(&mut self) {
-        dbg!("Dropping opaque ui state");
-    }
-}
-
-impl<'a> From<*mut OpaqueUiState> for &'a mut UiState<'a> {
-    fn from(p: *mut OpaqueUiState) -> &'a mut UiState<'a> {
-        unsafe { &mut *(p as *mut UiState<'a>) }
-    }
-}
-
-impl<'a> From<UiState<'a>> for OpaqueUiState {
-    fn from(mut s: UiState<'a>) -> OpaqueUiState {
-        OpaqueUiState((&mut s) as *mut _ as *const c_void)
-    }
-}
-
 // Javascript jams
+// let the jank begin!
+
+static mut STATES: Option<Vec<UiState>> = None;
+type StateId = usize;
+fn get_ui_states() -> &'static mut Vec<UiState> {
+    unsafe {
+        if let None = STATES {
+            STATES = Some(vec![]);
+        }
+        STATES.as_mut().unwrap()
+    }
+}
+
+fn get_state(id: StateId) -> &'static mut UiState {
+    let ui_states = get_ui_states();
+    ui_states.get_mut(id).expect("Use of uninitialized UiState")
+}
+
 #[wasm_bindgen]
-pub fn mount(ctx: &CanvasRenderingContext2d, width: usize, height: usize) -> *mut OpaqueUiState {
-    dbg!("Mounting a {}x{} fractal", width, height);
+pub fn mount(ctx: CanvasRenderingContext2d, width: usize, height: usize) -> StateId {
+    let ui_states = get_ui_states();
     let mut ui_state = UiState::init(ctx, width, height);
     ui_state.render();
-    &mut ui_state.into()
+    ui_states.push(ui_state);
+    return ui_states.len() - 1;
 }
 
 #[wasm_bindgen]
-pub fn resize(s: *mut OpaqueUiState, width: usize, height: usize) {
-    let ui_state: &mut UiState = s.into();
-    ui_state.handle(UiAction::Resize(width, height));
+pub fn resize(s: StateId, width: usize, height: usize) {
+    get_state(s).handle(UiAction::Resize(width, height));
 }
 
 #[wasm_bindgen]
-pub fn mouse_down(s: *mut OpaqueUiState, u: f32, v: f32) {
-    let ui_state: &mut UiState = s.into();
-    ui_state.handle(UiAction::MouseDown(u, v));
+pub fn mouse_down(s: StateId, u: f32, v: f32) {
+    get_state(s).handle(UiAction::MouseDown(u, v));
 }
 
 #[wasm_bindgen]
-pub fn mouse_up(s: *mut OpaqueUiState) {
-    let ui_state: &mut UiState = s.into();
-    ui_state.handle(UiAction::MouseUp);
+pub fn mouse_up(s: StateId) {
+    get_state(s).handle(UiAction::MouseUp);
 }
 
 #[wasm_bindgen]
-pub fn mouse_move(s: *mut OpaqueUiState, u: f32, v: f32) {
-    let ui_state: &mut UiState = s.into();
-    ui_state.handle(UiAction::MouseMove(u, v));
+pub fn mouse_move(s: StateId, u: f32, v: f32) {
+    get_state(s).handle(UiAction::MouseMove(u, v));
 }

@@ -7,12 +7,15 @@ heap.fill(undefined);
 
 heap.push(undefined, null, true, false);
 
-let stack_pointer = 32;
+let heap_next = heap.length;
 
-function addBorrowedObject(obj) {
-    if (stack_pointer == 1) throw new Error('out of js stack');
-    heap[--stack_pointer] = obj;
-    return stack_pointer;
+function addHeapObject(obj) {
+    if (heap_next === heap.length) heap.push(heap.length + 1);
+    const idx = heap_next;
+    heap_next = heap[idx];
+
+    heap[idx] = obj;
+    return idx;
 }
 /**
 * @param {any} ctx
@@ -21,12 +24,8 @@ function addBorrowedObject(obj) {
 * @returns {number}
 */
 export function mount(ctx, width, height) {
-    try {
-        const ret = wasm.mount(addBorrowedObject(ctx), width, height);
-        return ret;
-    } finally {
-        heap[stack_pointer++] = undefined;
-    }
+    const ret = wasm.mount(addHeapObject(ctx), width, height);
+    return ret >>> 0;
 }
 
 /**
@@ -65,8 +64,6 @@ export function mouse_move(s, u, v) {
 
 function getObject(idx) { return heap[idx]; }
 
-let heap_next = heap.length;
-
 function dropObject(idx) {
     if (idx < 36) return;
     heap[idx] = heap_next;
@@ -77,15 +74,6 @@ function takeObject(idx) {
     const ret = getObject(idx);
     dropObject(idx);
     return ret;
-}
-
-function addHeapObject(obj) {
-    if (heap_next === heap.length) heap.push(heap.length + 1);
-    const idx = heap_next;
-    heap_next = heap[idx];
-
-    heap[idx] = obj;
-    return idx;
 }
 
 function handleError(e) {
@@ -238,17 +226,6 @@ cachedTextDecoder.decode();
 
 function getStringFromWasm(ptr, len) {
     return cachedTextDecoder.decode(getUint8Memory().subarray(ptr, ptr + len));
-}
-/**
-*/
-export class OpaqueUiState {
-
-    free() {
-        const ptr = this.ptr;
-        this.ptr = 0;
-
-        wasm.__wbg_opaqueuistate_free(ptr);
-    }
 }
 
 function init(module) {
