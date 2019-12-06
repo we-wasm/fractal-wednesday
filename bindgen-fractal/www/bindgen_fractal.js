@@ -62,6 +62,16 @@ export function mouse_move(s, u, v) {
     wasm.mouse_move(s, u, v);
 }
 
+/**
+* @param {number} s
+* @param {number} z
+* @param {number} u
+* @param {number} v
+*/
+export function zoom(s, z, u, v) {
+    wasm.zoom(s, z, u, v);
+}
+
 function getObject(idx) { return heap[idx]; }
 
 function dropObject(idx) {

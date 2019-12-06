@@ -188,6 +188,11 @@ impl Viewport {
             im: self.center.im + (self.width * v as f64),
         }
     }
+    fn zoom(&mut self, z: f32, u: f32, v: f32) {
+        let z = 1.0 + z;
+        self.width = self.width * z as f64;
+        self.translate((u - 0.5) - (u - 0.5) * z, (v - 0.5) - (v - 0.5) * z);
+    }
 }
 
 pub enum MouseState {
@@ -205,6 +210,7 @@ pub enum UiAction {
     MouseUp,
     MouseDown(f32, f32),
     MouseMove(f32, f32),
+    MouseZoom(f32, f32, f32),
     Resize(usize, usize),
 }
 
@@ -223,10 +229,11 @@ impl UiState {
     }
 
     pub fn handle(&mut self, a: UiAction) {
+        use UiAction::*;
         match a {
-            UiAction::MouseUp => self.mouse = MouseState::Up,
-            UiAction::MouseDown(u, v) => self.mouse = MouseState::Down(u, v),
-            UiAction::MouseMove(u, v) => {
+            MouseUp => self.mouse = MouseState::Up,
+            MouseDown(u, v) => self.mouse = MouseState::Down(u, v),
+            MouseMove(u, v) => {
                 // TODO: mutate viewport based on a.mouse - s.mouse
                 // self.viewport = manipulate viewport
                 if let MouseState::Down(prev_u, prev_v) = self.mouse {
@@ -236,7 +243,12 @@ impl UiState {
                     self.render();
                 }
             }
-            UiAction::Resize(w, h) => {
+            MouseZoom(z, u, v) => {
+                let scaled_v = ((v - 0.5) * (self.tile.h as f32 / self.tile.w as f32)) + 0.5;
+                self.viewport.zoom(z, u, scaled_v);
+                self.render();
+            }
+            Resize(w, h) => {
                 self.tile = TileBuffer::with_size(w, h);
                 self.render();
             }
@@ -307,6 +319,8 @@ impl Drop for UiState {
 static mut STATES: Option<Vec<UiState>> = None;
 type StateId = usize;
 fn get_ui_states() -> &'static mut Vec<UiState> {
+    // Need to maintain rust ownership for memory management
+    // Passing static ints over to js, letting wasm runtime manage realloc
     unsafe {
         if let None = STATES {
             STATES = Some(vec![]);
@@ -347,4 +361,9 @@ pub fn mouse_up(s: StateId) {
 #[wasm_bindgen]
 pub fn mouse_move(s: StateId, u: f32, v: f32) {
     get_state(s).handle(UiAction::MouseMove(u, v));
+}
+
+#[wasm_bindgen]
+pub fn zoom(s: StateId, z: f32, u: f32, v: f32) {
+    get_state(s).handle(UiAction::MouseZoom(z, u, v));
 }
