@@ -1,40 +1,12 @@
 
 let wasm;
 
-const heap = new Array(32);
-
-heap.fill(undefined);
-
-heap.push(undefined, null, true, false);
-
-let heap_next = heap.length;
-
-function addHeapObject(obj) {
-    if (heap_next === heap.length) heap.push(heap.length + 1);
-    const idx = heap_next;
-    heap_next = heap[idx];
-
-    heap[idx] = obj;
-    return idx;
-}
 /**
-* @param {any} ctx
-* @param {number} width
-* @param {number} height
 * @returns {number}
 */
-export function mount(ctx, width, height) {
-    const ret = wasm.mount(addHeapObject(ctx), width, height);
+export function new_fractal() {
+    const ret = wasm.new_fractal();
     return ret >>> 0;
-}
-
-/**
-* @param {number} s
-* @param {number} width
-* @param {number} height
-*/
-export function resize(s, width, height) {
-    wasm.resize(s, width, height);
 }
 
 /**
@@ -70,6 +42,32 @@ export function mouse_move(s, u, v) {
 */
 export function zoom(s, z, u, v) {
     wasm.zoom(s, z, u, v);
+}
+
+const heap = new Array(32);
+
+heap.fill(undefined);
+
+heap.push(undefined, null, true, false);
+
+let heap_next = heap.length;
+
+function addHeapObject(obj) {
+    if (heap_next === heap.length) heap.push(heap.length + 1);
+    const idx = heap_next;
+    heap_next = heap[idx];
+
+    heap[idx] = obj;
+    return idx;
+}
+/**
+* @param {number} s
+* @param {any} ctx
+* @param {number} w
+* @param {number} h
+*/
+export function render(s, ctx, w, h) {
+    wasm.render(s, addHeapObject(ctx), w, h);
 }
 
 function getObject(idx) { return heap[idx]; }

@@ -14,7 +14,7 @@
   </style>
   <script type="module">
     /** @type {import('../pkg/bindgen_fractal.d.ts')} */
-    import init, { mount, resize, mouse_down, mouse_up, mouse_move, zoom } from './bindgen_fractal.js';
+    import init, { new_fractal, mouse_down, mouse_up, mouse_move, zoom, render } from './bindgen_fractal.js';
     async function init_this() {
       const wasm_exports = await init();
 
@@ -22,33 +22,38 @@
       let lastW = canvas.width = window.innerWidth;
       let lastH = canvas.height = window.innerHeight;
 
-      function initCanvas(canvas) {
+      const uiState = new_fractal();
+
+      function renderFractal() {
         const { width, height } = canvas;
         const start = performance.now();
         const ctx = canvas.getContext('2d');
-        const uiState = mount(ctx, width, height);
+        render(uiState, ctx, width, height);
         const elapsed = performance.now() - start;
         console.log(`Rendered ${width * height} samples in ${elapsed}ms using ${wasm_exports.memory.buffer.byteLength / 1000000}M`);
         return uiState;
       }
 
-      const uiState = initCanvas(canvas);
 
       function getUV(e) {
         return [e.offsetX / e.target.width, e.offsetY / e.target.height];
       }
       canvas.addEventListener("mousedown", (e) => {
         mouse_down(uiState, ...getUV(e));
+        renderFractal();
       });
       canvas.addEventListener("mouseup", () => {
         mouse_up(uiState);
+        renderFractal();
       });
       canvas.addEventListener("mousemove", (e) => {
         mouse_move(uiState, ...getUV(e));
+        renderFractal();
       });
       canvas.addEventListener("wheel", (e) => {
         // deltaY tends to be in the range of 3 to -3
         zoom(uiState, e.deltaY / 100, ...getUV(e));
+        renderFractal();
       });
 
       function getSize() {
@@ -63,7 +68,7 @@
         if (lastW !== width || lastH !== height) {
           canvas.width = lastW = width;
           canvas.height = lastH = height;
-          resize(uiState, width, height);
+          renderFractal();
         }
       }, 100);
     }
