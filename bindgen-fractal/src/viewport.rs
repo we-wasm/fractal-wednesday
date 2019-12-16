@@ -2,6 +2,12 @@
 use crate::render::Complex;
 use std::{mem, slice};
 
+/// A coordinate on a buffer in the range 0-1 for u and v
+pub struct TexCoord {
+    pub u: f32,
+    pub v: f32,
+}
+
 pub struct TileBuffer<T> {
     w: usize,
     h: usize,
@@ -41,20 +47,26 @@ where
         self.h as f32 / self.w as f32
     }
 
-    pub fn apply<F>(&mut self, center: Complex, width: f64, f: F)
+    pub fn apply<F>(&mut self, start: TexCoord, end: TexCoord, f: F)
     where
-        F: Fn(Complex) -> T,
+        F: Fn(TexCoord) -> T,
     {
-        let step = width / self.w as f64;
-        let start_re = (center.re - width / 2.0) as f64;
-        let start_im = (center.im - (width * (self.h as f64 / self.w as f64)) / 2.0) as f64;
-        for y in 0..self.h {
-            for x in 0..self.w {
-                self.buf[(y * self.w + x) as usize] = f(Complex {
-                    re: start_re + ((x as f64) * step),
-                    im: start_im + ((y as f64) * step),
-                });
+        let start_x = (start.u * self.w as f32) as usize;
+        let end_x = (end.u * self.w as f32) as usize;
+        let start_y = (start.v * self.h as f32) as usize;
+        let end_y = (end.v * self.h as f32) as usize;
+        let step_u = (end.u - start.u) / (end_x as f32 - start_x as f32);
+        let step_v = (end.v - start.v) / (end_y as f32 - start_y as f32);
+        let mut u = start.u;
+        let mut v = start.v;
+        for y in start_y..end_y {
+            let y_off = y * self.w;
+            for x in start_x..end_x {
+                self.buf[(y_off + x) as usize] = f(TexCoord { u, v });
+                u += step_u;
             }
+            u = 0.0;
+            v += step_v;
         }
     }
 }
@@ -72,6 +84,15 @@ impl Viewport {
             im: self.center.im + (self.width * v as f64),
         }
     }
+
+    pub fn map_coord(&self, c: TexCoord, aspect_ratio: f32) -> Complex {
+        let aspect_ratio = aspect_ratio as f64;
+        Complex {
+            re: (self.center.re - self.width / 2.0 + c.u as f64 * self.width) as f64,
+            im: (self.center.im - self.width / 2.0 + c.v as f64 * self.width) as f64 * aspect_ratio,
+        }
+    }
+
     pub fn zoom(&mut self, z: f32, u: f32, v: f32) {
         let z = 1.0 + z;
         self.width = self.width * z as f64;

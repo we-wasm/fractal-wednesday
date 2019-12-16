@@ -1,6 +1,6 @@
 // pixel buffer <-> events
 use crate::render::{build_palette, mandel_color, mandel_iter, Complex, RGB};
-use crate::viewport::{TileBuffer, Viewport};
+use crate::viewport::{TexCoord, TileBuffer, Viewport};
 
 pub enum MouseState {
     Up,
@@ -83,16 +83,19 @@ impl UiState {
 
         let max_iter = self.max_iter;
 
-        tile.apply(viewport.center, viewport.width, |c| {
-            mandel_color(mandel_iter(max_iter, c), &palette)
-        });
+        let aspect_ratio = tile.aspect_ratio();
+
+        tile.apply(
+            TexCoord { u: 0.0, v: 0.0 },
+            TexCoord { u: 1.0, v: 1.0 },
+            |c| {
+                mandel_color(
+                    mandel_iter(max_iter, viewport.map_coord(c, aspect_ratio)),
+                    &palette,
+                )
+            },
+        );
 
         tile.get_mut_buf()
-    }
-}
-
-impl Drop for UiState {
-    fn drop(&mut self) {
-        dbg!("Dropping ui state");
     }
 }
