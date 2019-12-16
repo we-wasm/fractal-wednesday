@@ -1,7 +1,7 @@
 extern crate wasm_bindgen;
 extern crate wee_alloc;
 
-use web_sys::{CanvasRenderingContext2d, ImageData};
+use web_sys::{CanvasRenderingContext2d, ImageData, Storage};
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::Clamped;

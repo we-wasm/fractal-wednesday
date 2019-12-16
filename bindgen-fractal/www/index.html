@@ -48,6 +48,7 @@
       });
       canvas.addEventListener("mousemove", (e) => {
         mouse_move(uiState, ...getUV(e));
+        // Issue: this doesn't check for mouse down or up?
         renderFractal();
       });
       canvas.addEventListener("wheel", (e) => {
@@ -71,6 +72,8 @@
           renderFractal();
         }
       }, 100);
+
+      renderFractal();
     }
 
     init_this();
