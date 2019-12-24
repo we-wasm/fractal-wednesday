@@ -7,7 +7,7 @@ let
   rWasm = rPkg.rust.override { targets = [ "wasm32-unknown-unknown" ]; };
 
 in pkgs.mkShell {
-  buildInputs = with pkgs; [ python3 cargo-web wasm-pack wabt rWasm ];
+  buildInputs = with pkgs; [ caddy cargo-web wasm-pack wabt binaryen rWasm ];
 
   # This is for Nix/NixOS compatibility with RLS/rust-analyzer
   RUST_SRC_PATH = "${rPkg.rust-src}/lib/rustlib/src/rust/src";
