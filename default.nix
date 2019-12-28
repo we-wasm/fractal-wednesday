@@ -31,19 +31,36 @@ let
   # This is for Nix/NixOS compatibility with RLS/rust-analyzer
   RUST_SRC_PATH = "${rPkg.rust-src}/lib/rustlib/src/rust/src";
 
-  makeRustBundler = { name, debug ? false }:
-    wrap {
+  makeRustBundler = { name, debug ? false, useWasmPack ? true, speed ? false }:
+    let opt_flag = if speed then "-Oz" else "-O3";
+    in wrap {
       inherit name;
       paths = [ wasm-pack wasm-strip wabt binaryen rWasm ];
-      script = let BINARY = "${name}_bg.wasm";
-      in ''
-        #!/usr/bin/env bash
-        wasm-pack build -t web ${optionalString debug "--dev"} .
-        wasm-strip pkg/${BINARY}
-        mkdir -p www
-        wasm-opt -o www/${BINARY} -O3 pkg/${BINARY}
-        cp pkg/${name}.js www/${name}.js
-      '';
+      script = let
+
+        cargo_script = let
+          BINARY = toString (./target/wasm32-unknown-unknown
+            + (if debug then "/debug" else "/release") + "/${name}.wasm");
+        in ''
+          #!/usr/bin/env bash
+          cargo build --target wasm32-unknown-unknown ${
+            optionalString (!debug) "--release"
+          }
+          ${optionalString (!debug) "wasm-strip ${BINARY}"}
+          mkdir -p www
+          wasm-opt -o www/${name}.wasm ${opt_flag} ${BINARY}
+        '';
+
+        wasm_pack_script = let BINARY = "${name}_bg.wasm";
+        in ''
+          #!/usr/bin/env bash
+          wasm-pack build -t web ${optionalString debug "--dev"} .
+          ${optionalString (!debug) "wasm-strip pkg/${BINARY}"}
+          mkdir -p www
+          wasm-opt -o www/${BINARY} ${opt_flag} pkg/${BINARY}
+          cp pkg/${name}.js www/${name}.js
+        '';
+      in if useWasmPack then wasm_pack_script else cargo_script;
     };
 in {
   inherit buildInputs RUST_SRC_PATH RUST_BACKTRACE;
