@@ -31,6 +31,15 @@ let
   # This is for Nix/NixOS compatibility with RLS/rust-analyzer
   RUST_SRC_PATH = "${rPkg.rust-src}/lib/rustlib/src/rust/src";
 
+  makeWeb = { name }:
+    wrap {
+      inherit name;
+      paths = [ caddy ];
+      script = ''
+        caddy --root ${./. + "/${name}/www"}
+      '';
+    };
+
   makeRustBundler = { name, debug ? false, useWasmPack ? true, speed ? false }:
     let opt_flag = if speed then "-Oz" else "-O3";
     in wrap {
@@ -64,5 +73,5 @@ let
     };
 in {
   inherit buildInputs RUST_SRC_PATH RUST_BACKTRACE;
-  inherit rWasm wrap makeRustBundler;
+  inherit rWasm wrap makeWeb makeRustBundler;
 }
