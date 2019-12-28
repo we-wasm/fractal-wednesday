@@ -1,13 +1,2 @@
 #!/usr/bin/env bash
-
-set -e
-
-PACKAGE=bindgen_fractal
-BINARY=pkg/${PACKAGE}_bg.wasm
-
-wasm-pack build --target=web --dev .
-mkdir -p www
-cp $BINARY www/${PACKAGE}_bg.wasm
-cp pkg/${PACKAGE}.js www/${PACKAGE}.js
-ls -lh www/${PACKAGE}_bg.wasm
-ls -lh www/${PACKAGE}.js
+$(nix-build --no-out-link --arg debug true)
